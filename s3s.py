@@ -8,7 +8,7 @@ import argparse, datetime, json, os, shutil, re, requests, sys, time, uuid
 import msgpack
 import iksm, utils
 
-A_VERSION = "0.1.5"
+A_VERSION = "0.1.6"
 
 DEBUG = False
 
@@ -412,12 +412,10 @@ def prepare_battle_result(battle, ismonitoring, overview_data=None):
 	elif mode == "PRIVATE":
 		payload["lobby"] = "private"
 	elif mode == "FEST":
-		# if utils.b64d(battle["vsMode"]["id"]) == 6:
-			# payload["lobby"] = "fest_open"
-		# elif  utils.b64d(battle["vsMode"]["id"]) == 7:
-			# payload["lobby"] = "fest_pro"
-		print("Splatfest battles are not yet supported - skipping. ")
-		return {}
+		if utils.b64d(battle["vsMode"]["id"]) == 6:
+			payload["lobby"] = "splatfest_open"
+		elif utils.b64d(battle["vsMode"]["id"]) == 7:
+			payload["lobby"] = "splatfest_challenge" # pro
 
 	## RULE ##
 	##########
@@ -432,8 +430,9 @@ def prepare_battle_result(battle, ismonitoring, overview_data=None):
 		payload["rule"] = "hoko"
 	elif rule == "CLAM":
 		payload["rule"] = "asari"
-	# elif rule == "TRI_COLOR":
-		# payload["rule"] = "..."
+	elif rule == "TRI_COLOR":
+		print("Tricolor Turf War Splatfest battles are not yet supported - skipping.")
+		return {}
 
 	## STAGE ##
 	###########
@@ -505,16 +504,22 @@ def prepare_battle_result(battle, ismonitoring, overview_data=None):
 
 	## SPLATFEST ##
 	###############
-	# if mode == "FEST":
-		# battle["festMatch"]["dragonMatchType"] - NORMAL (1x), DECUPLE (10x), DRAGON (100x), DOUBLE_DRAGON (333x)
-		# battle["festMatch"]["contribution"] # clout
-		# battle["festMatch"]["jewel"]
-		# battle["festMatch"]["myFestPower"] # pro only
+	if mode == "FEST":
+		times_battle = battle["festMatch"]["dragonMatchType"] # NORMAL (1x), DECUPLE (10x), DRAGON (100x), DOUBLE_DRAGON (333x)
+		if times_battle == "DECUPLE":
+			payload["fest_dragon"] = "10x"
+		elif times_battle == "DRAGON":
+			payload["fest_dragon"] = "100x"
+		elif times_battle == "DOUBLE_DRAGON":
+			payload["fest_dragon"] = "333x"
+
+		payload["clout_change"] = battle["festMatch"]["contribution"]
+		payload["fest_power"]   = battle["festMatch"]["myFestPower"] # pro only
 		# if rule == "TRI_COLOR":
 			# ...
 
-	# Turf War only (NOT TRICOLOR)
-	if mode == "REGULAR":
+	# turf war only - not tricolor
+	if mode in ("REGULAR", "FEST"):
 		try:
 			payload["our_team_percent"]   = float(battle["myTeam"]["result"]["paintRatio"]) * 100
 			payload["their_team_percent"] = float(battle["otherTeams"][0]["result"]["paintRatio"]) * 100
@@ -541,13 +546,17 @@ def prepare_battle_result(battle, ismonitoring, overview_data=None):
 		payload["knockout"] = "no" if battle["knockout"] is None or battle["knockout"] == "NEITHER" else "yes"
 		payload["rank_exp_change"] = battle["bankaraMatch"]["earnedUdemaePoint"]
 
-		if overview_data or ismonitoring: # if we're passing in the overview.json file with -i, or monitoring mode
-			if overview_data is None:
-				overview_post = requests.post(utils.GRAPHQL_URL,
-					data=utils.gen_graphql_body(utils.translate_rid["BankaraBattleHistoriesQuery"]),
-					headers=headbutt(),
-					cookies=dict(_gtoken=GTOKEN))
-				overview_data = [json.loads(overview_post.text)] # make the request in real-time when monitoring to get rank, etc.
+		if overview_data is None: # no passed in file with -i
+			overview_post = requests.post(utils.GRAPHQL_URL,
+				data=utils.gen_graphql_body(utils.translate_rid["BankaraBattleHistoriesQuery"]),
+				headers=headbutt(),
+				cookies=dict(_gtoken=GTOKEN))
+			try:
+				overview_data = [json.loads(overview_post.text)] # make the request in real-time in attempt to get rank, etc.
+			except:
+				overview_data = None
+				print("Failed to get recent Anarchy battles. Proceeding without information on current rank.")
+		if overview_data is not None:
 			for screen in overview_data:
 				if "bankaraBattleHistories" in screen["data"]:
 					ranked_list = screen["data"]["bankaraBattleHistories"]["historyGroups"]["nodes"]
