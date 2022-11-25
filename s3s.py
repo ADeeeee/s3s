@@ -5,11 +5,12 @@
 # License: GPLv3
 
 import argparse, base64, datetime, json, os, shutil, re, requests, sys, time, uuid
-import mmh3, msgpack
+from subprocess import call
+import msgpack
 from packaging import version
 import iksm, utils
 
-A_VERSION = "0.1.17"
+A_VERSION = "0.1.19"
 
 DEBUG = False
 
@@ -598,7 +599,9 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 		payload["knockout"] = "no" if battle["knockout"] is None or battle["knockout"] == "NEITHER" else "yes"
 		payload["rank_exp_change"] = battle["bankaraMatch"]["earnedUdemaePoint"]
 
-		battle_id = base64.b64decode(battle["id"]).decode('utf-8')
+		battle_id         = base64.b64decode(battle["id"]).decode('utf-8')
+		battle_id_mutated = battle_id.replace("BANKARA", "RECENT") # normalize the ID, make work with -M and -r
+
 		if overview_data is None: # no passed in file with -i
 			overview_post = requests.post(utils.GRAPHQL_URL,
 				data=utils.gen_graphql_body(utils.translate_rid["BankaraBattleHistoriesQuery"]),
@@ -620,9 +623,10 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 			for parent in ranked_list: # groups in overview (ranked) JSON/screen
 				for idx, child in enumerate(parent["historyDetails"]["nodes"]):
 
-					overview_battle_id = base64.b64decode(child["id"]).decode('utf-8')
+					overview_battle_id         = base64.b64decode(child["id"]).decode('utf-8')
 					overview_battle_id_mutated = overview_battle_id.replace("BANKARA", "RECENT") # same battle, different screens
-					if overview_battle_id_mutated == battle_id: # found the battle ID in the other file
+
+					if overview_battle_id_mutated == battle_id_mutated: # found the battle ID in the other file
 
 						full_rank = re.split('([0-9]+)', child["udemae"].lower())
 						was_s_plus_before = len(full_rank) > 1 # true if "before" rank is s+
@@ -643,13 +647,11 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 							else:
 								payload["rank_up_battle"] = "no"
 
-							if parent["bankaraMatchChallenge"]["udemaeAfter"] is None:
-								payload["rank_after"] = payload["rank_before"]
-								if was_s_plus_before:
-									payload["rank_after_s_plus"] = payload["rank_before_s_plus"] # also s+ after
-							else:
+							if parent["bankaraMatchChallenge"]["udemaeAfter"] is not None:
 								if idx != 0:
 									payload["rank_after"] = payload["rank_before"]
+									if was_s_plus_before: # not a rank-up battle, so must be the same
+										payload["rank_after_s_plus"] = payload["rank_before_s_plus"]
 								else: # the battle where we actually ranked up
 									full_rank_after = re.split('([0-9]+)', parent["bankaraMatchChallenge"]["udemaeAfter"].lower())
 									payload["rank_after"] = full_rank_after[0]
@@ -849,7 +851,7 @@ def check_for_updates():
 						"` as soon as possible.\n")
 			else: # no git directory
 				print(" Visit the site below to update:\nhttps://github.com/frozenpandaman/s3s\n")
-	except: # if there's a problem connecting to github
+	except Exception as e: # if there's a problem connecting to github
 		print('\033[3m' + "» Couldn't connect to GitHub. Please update the script manually via " \
 			'`\033[91m' + "git pull" + '\033[0m' + "`." + '\033[0m' + "\n")
 		# print('\033[3m' + "» While s3s is in beta, please update the script regularly via " \
@@ -945,7 +947,7 @@ def fetch_and_upload_single_result(hash, noun, isblackout, istestrun):
 	post_result(result, False, isblackout, istestrun) # not monitoring mode
 
 
-def check_if_missing(which, isblackout, istestrun):
+def check_if_missing(which, isblackout, istestrun, skipprefetch):
 	'''Checks for unuploaded battles and uploads any that are found (-r flag).'''
 
 	noun = utils.set_noun(which)
@@ -978,7 +980,7 @@ def check_if_missing(which, isblackout, istestrun):
 
 			# ! fetch from online
 			# specific - check ALL possible battles; printout - to show tokens are being checked at program start
-			splatnet_ids = fetch_json(which, specific=True, numbers_only=True, printout=True)
+			splatnet_ids = fetch_json(which, specific=True, numbers_only=True, printout=True, skipprefetch=skipprefetch)
 
 			# same as code in -i section below...
 			for id in reversed(splatnet_ids):
@@ -1003,24 +1005,8 @@ def check_if_missing(which, isblackout, istestrun):
 		noun = "jobs" # for second run through the loop
 		which = "salmon"
 
-def check_for_new_results(input_params):
+def check_for_new_results(which, cached_battles, cached_jobs, battle_wins, battle_losses, battle_draws, splatfest_wins, splatfest_losses, splatfest_draws, mirror_matches, job_successes, job_failures, isblackout, istestrun):
 	'''Helper function for monitor_battles(), called every N seconds or when exiting.'''
-
-	# INPUT PARAMETERS, IN ORDER:
-	which            = input_params[0] # "ink", "salmon", or "both"
-	cached_battles   = input_params[1] # lists of battles/jobs monitoring mode already knows about
-	cached_jobs      = input_params[2]
-	battle_wins      = input_params[3] # ink battle counters
-	battle_losses    = input_params[4]
-	battle_draws     = input_params[5]
-	splatfest_wins   = input_params[6] # splatfest counters
-	splatfest_losses = input_params[7]
-	splatfest_draws  = input_params[8]
-	mirror_matches   = input_params[9]
-	job_successes    = input_params[10] # salmon run counters
-	job_failures     = input_params[11]
-	isblackout       = input_params[12] # type of run
-	istestrun        = input_params[13]
 
 	# ! fetch from online
 	# check only numbers (quicker); specific=False since checks recent (latest) only
@@ -1153,7 +1139,7 @@ def monitor_battles(which, secs, isblackout, istestrun, skipprefetch):
 				job_successes, job_failures,
 				isblackout, istestrun
 			]
-			which, cached_battles, cached_jobs, battle_wins, battle_losses, battle_draws, splatfest_wins, splatfest_losses, splatfest_draws, mirror_matches, job_successes, job_failures, foundany = check_for_new_results(input_params)
+			which, cached_battles, cached_jobs, battle_wins, battle_losses, battle_draws, splatfest_wins, splatfest_losses, splatfest_draws, mirror_matches, job_successes, job_failures, foundany = check_for_new_results(*input_params)
 
 	except KeyboardInterrupt:
 		print(f"\n\nChecking to see if there are unuploaded {utils.set_noun(which)} before exiting...")
@@ -1166,7 +1152,7 @@ def monitor_battles(which, secs, isblackout, istestrun, skipprefetch):
 			job_successes, job_failures,
 			isblackout, istestrun
 		]
-		which, cached_battles, cached_jobs, battle_wins, battle_losses, battle_draws, splatfest_wins, splatfest_losses, splatfest_draws, mirror_matches, job_successes, job_failures, foundany = check_for_new_results(input_params)
+		which, cached_battles, cached_jobs, battle_wins, battle_losses, battle_draws, splatfest_wins, splatfest_losses, splatfest_draws, mirror_matches, job_successes, job_failures, foundany = check_for_new_results(*input_params)
 
 		noun = utils.set_noun(which)
 		if foundany:
@@ -1227,6 +1213,13 @@ class SquidProgress:
 
 def export_seed_json(skipprefetch=False):
 	'''Export a JSON file for use with Lean's seed checker at https://leanny.github.io/splat3seedchecker/.'''
+
+	try:
+		import pymmh3 as mmh3
+	except ModuleNotFoundError:
+		print("This function requires a Python module you don't have installed. " \
+			"Please run " + '`\033[91m' + "pip install -r requirements.txt" + '\033[0m`' + " and try again.")
+		sys.exit(1)
 
 	if not skipprefetch:
 		prefetch_checks(printout=True)
@@ -1468,7 +1461,7 @@ def main():
 		update_salmon_profile()
 
 	if check_old:
-		check_if_missing(which, blackout, test_run) # monitoring mode hasn't begun yet
+		check_if_missing(which, blackout, test_run, skipprefetch) # monitoring mode hasn't begun yet
 		print()
 
 	if secs != -1: # monitoring mode
