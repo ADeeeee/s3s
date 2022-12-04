@@ -11,7 +11,7 @@ import msgpack
 from packaging import version
 import iksm, utils
 
-A_VERSION = "0.2.2"
+A_VERSION = "0.2.3"
 
 DEBUG = False
 
@@ -271,6 +271,12 @@ def fetch_json(which, separate=False, exportall=False, specific=False, numbers_o
 				for battle_group in query1_resp["data"]["bankaraBattleHistories"]["historyGroups"]["nodes"]:
 					for battle in battle_group["historyDetails"]["nodes"]:
 						battle_ids.append(battle["id"])
+			# ink battles - latest 50 x battles
+			elif "xBattleHistories" in query1_resp["data"]:
+				needs_sorted = True
+				for battle_group in query1_resp["data"]["xBattleHistories"]["historyGroups"]["nodes"]:
+					for battle in battle_group["historyDetails"]["nodes"]:
+						battle_ids.append(battle["id"])
 			# ink battles - latest 50 private battles
 			elif "privateBattleHistories" in query1_resp["data"] \
 			and not utils.custom_key_exists("ignore_private", CONFIG_DATA):
@@ -278,6 +284,7 @@ def fetch_json(which, separate=False, exportall=False, specific=False, numbers_o
 				for battle_group in query1_resp["data"]["privateBattleHistories"]["historyGroups"]["nodes"]:
 					for battle in battle_group["historyDetails"]["nodes"]:
 						battle_ids.append(battle["id"])
+
 			# salmon run jobs - latest 50
 			elif "coopResult" in query1_resp["data"]:
 				for shift in query1_resp["data"]["coopResult"]["historyGroups"]["nodes"]:
@@ -503,7 +510,7 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 		elif utils.b64d(battle["vsMode"]["id"]) == 7:
 			payload["lobby"] = "splatfest_challenge" # pro
 	elif mode == "X_MATCH":
-		pass # TODO
+		payload["lobby"] = "xmatch"
 	elif mode == "LEAGUE":
 		pass # TODO
 
@@ -602,7 +609,8 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 		payload["their_team_inked"] = their_team_inked
 
 	if mode == "PRIVATE": # these don't get sent otherwise
-		try: # could be anarchy, maybe not
+		# could be a ranked mode
+		try:
 			payload["knockout"] = "no" if battle["knockout"] is None or battle["knockout"] == "NEITHER" else "yes"
 		except:
 			pass
@@ -611,6 +619,7 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 			payload["their_team_count"] = battle["otherTeams"][0]["result"]["score"]
 		except:
 			pass
+		# could also be tw
 		try:
 			payload["our_team_percent"]   = float(battle["myTeam"]["result"]["paintRatio"]) * 100
 			payload["their_team_percent"] = float(battle["otherTeams"][0]["result"]["paintRatio"]) * 100
@@ -639,7 +648,7 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 				overview_data = [json.loads(overview_post.text)] # make the request in real-time in attempt to get rank, etc.
 			except:
 				overview_data = None
-				print("Failed to get recent Anarchy battles. Proceeding without information on current rank.")
+				print("Failed to get recent Anarchy Battles. Proceeding without information on current rank.")
 		if overview_data is not None:
 			for screen in overview_data:
 				if "bankaraBattleHistories" in screen["data"]:
@@ -655,7 +664,6 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 					overview_battle_id_mutated = overview_battle_id.replace("BANKARA", "RECENT") # same battle, different screens
 
 					if overview_battle_id_mutated == battle_id_mutated: # found the battle ID in the other file
-
 						full_rank = re.split('([0-9]+)', child["udemae"].lower())
 						was_s_plus_before = len(full_rank) > 1 # true if "before" rank is s+
 
@@ -705,8 +713,48 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 									print(f'* rank_exp_change: {parent["bankaraMatchChallenge"]["earnedUdemaePoint"]}')
 								else:
 									print(f'* rank_exp_change: 0')
-
 						break # found the child ID, no need to continue
+
+	if mode == "X_MATCH":
+		try:
+			payload["our_team_count"]   = battle["myTeam"]["result"]["score"]
+			payload["their_team_count"] = battle["otherTeams"][0]["result"]["score"]
+		except: # draw
+			pass
+
+		if battle["xMatch"]["lastXPower"] is not None:
+			payload["x_power_before"] = battle["xMatch"]["lastXPower"]
+
+		payload["knockout"] = "no" if battle["knockout"] is None or battle["knockout"] == "NEITHER" else "yes"
+
+		battle_id         = base64.b64decode(battle["id"]).decode('utf-8')
+		battle_id_mutated = battle_id.replace("XMATCH", "RECENT")
+
+		if overview_data is None: # no passed in file with -i
+			overview_post = requests.post(utils.GRAPHQL_URL,
+				data=utils.gen_graphql_body(utils.translate_rid["XBattleHistoriesQuery"]),
+				headers=headbutt(),
+				cookies=dict(_gtoken=GTOKEN))
+			try:
+				overview_data = [json.loads(overview_post.text)] # make the request in real-time in attempt to get rank, etc.
+			except:
+				overview_data = None
+				print("Failed to get recent X Battles. Proceeding without some information on X Power.")
+		if overview_data is not None:
+			for screen in overview_data:
+				if "xBattleHistories" in screen["data"]:
+					x_list = screen["data"]["xBattleHistories"]["historyGroups"]["nodes"]
+					break
+			for parent in x_list: # groups in overview (x) JSON/screen
+				for idx, child in enumerate(parent["historyDetails"]["nodes"]):
+
+					overview_battle_id         = base64.b64decode(child["id"]).decode('utf-8')
+					overview_battle_id_mutated = overview_battle_id.replace("XMATCH", "RECENT")
+
+					if overview_battle_id_mutated == battle_id_mutated:
+						if parent["xMatchMeasurement"]["state"] == "COMPLETED" and idx == 0:
+							payload["x_power_after"] = parent["xMatchMeasurement"]["xPowerAfter"]
+						break
 
 	## MEDALS ##
 	############
@@ -759,7 +807,7 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 	return payload
 
 
-def prepare_job_result(job, ismonitoring, isblackout, overview_data=None):
+def prepare_job_result(job, ismonitoring, isblackout, overview_data=None, prevresult=None):
 	'''Converts the Nintendo JSON format for a Salmon Run job to the stat.ink one.'''
 
 	# https://github.com/fetus-hina/stat.ink/wiki/Spl3-API:-Salmon-%EF%BC%8D-Post
@@ -806,13 +854,23 @@ def prepare_job_result(job, ismonitoring, isblackout, overview_data=None):
 		payload["title_after"]     = utils.b64d(job["afterGrade"]["id"])
 		payload["title_exp_after"] = job["afterGradePoint"]
 
-		point_diff = 20 if payload["clear_waves"] == 3 else -30 + (10 * job["resultWave"]) # +20 for win or -(30-10w) for loss
-		if payload["title_exp_after"] - point_diff >= 0: # before exp isn't negative, i.e. no title change
-			payload["title_before"]     = payload["title_after"]
-			payload["title_exp_before"] = payload["title_exp_after"] - point_diff
-		else: # ranked up
-			payload["title_before"]     = payload["title_after"] - 1
-			# exp...
+		# we're never certain of points gained - could be 20, but also 0 if playing w/ different titled friends
+		if job.get("previousHistoryDetail") != None:
+			prev_job_id = job["previousHistoryDetail"]["id"]
+
+			if overview_data: # passed in a file, so no web request needed
+				if prevresult:
+					payload["title_before"] = utils.b64d(prevresult["coopHistoryDetail"]["afterGrade"]["id"])
+					payload["title_exp_before"] = prevresult["coopHistoryDetail"]["afterGradePoint"]
+			else:
+				prev_job_post = requests.post(utils.GRAPHQL_URL,
+					data=utils.gen_graphql_body(utils.translate_rid["CoopHistoryDetailQuery"], "coopHistoryDetailId", prev_job_id),
+					headers=headbutt(forcelang='en-US'),
+					cookies=dict(_gtoken=GTOKEN))
+				prev_job = json.loads(prev_job_post.text)
+
+				payload["title_before"] = utils.b64d(prev_job["data"]["coopHistoryDetail"]["afterGrade"]["id"])
+				payload["title_exp_before"] = prev_job["data"]["coopHistoryDetail"]["afterGradePoint"]
 
 	geggs = job["myResult"]["goldenDeliverCount"]
 	peggs = job["myResult"]["deliverCount"]
@@ -933,10 +991,20 @@ def prepare_job_result(job, ismonitoring, isblackout, overview_data=None):
 				pass
 
 		weapons = []
+		gave_warning = False
 		for weapon in player["weapons"]: # should always be returned in in english due to headbutt() using forcelang
 			wep_string = weapon["name"].lower().replace(" ", "_").replace("-", "_").replace(".", "").replace("'", "")
 			if wep_string == "random": # NINTENDOOOOOOO
 				wep_string = None
+			else:
+				try:
+					wep_string.encode(encoding='utf-8').decode('ascii')
+				except UnicodeDecodeError: # detect non-latin characters... not all non-english strings, but many
+					wep_string = None
+					if not gave_warning:
+						gave_warning = True
+						print("(!) Proceeding without weapon names. See https://github.com/frozenpandaman/s3s/issues/80 for more information.")
+
 			weapons.append(wep_string)
 		player_info["weapons"] = weapons
 
@@ -1026,7 +1094,8 @@ def post_result(data, ismonitoring, isblackout, istestrun, overview_data=None):
 			payload = prepare_battle_result(results[i]["data"], ismonitoring, isblackout, overview_data)
 			which = "ink"
 		elif "coopHistoryDetail" in results[i]["data"]: # salmon run job
-			payload = prepare_job_result(results[i]["data"], ismonitoring, isblackout, overview_data)
+			prevresult = results[i-1]["data"] if i > 0 else None
+			payload = prepare_job_result(results[i]["data"], ismonitoring, isblackout, overview_data, prevresult=prevresult)
 			which = "salmon"
 		else: # shouldn't happen
 			print("Ill-formatted JSON while uploading. Exiting.")
