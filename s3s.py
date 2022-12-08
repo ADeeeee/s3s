@@ -11,7 +11,7 @@ import msgpack
 from packaging import version
 import iksm, utils
 
-A_VERSION = "0.2.3"
+A_VERSION = "0.2.4"
 
 DEBUG = False
 
@@ -344,8 +344,7 @@ def fetch_detailed_result(is_vs_history, history_id, swim):
 def update_salmon_profile():
 	''' Updates stat.ink Salmon Run stats/profile.'''
 
-	pass # SR TODO
-
+	pass
 	# prefetch_checks()
 
 	# results_list = requests.post(utils.GRAPHQL_URL,
@@ -353,16 +352,17 @@ def update_salmon_profile():
 	# 	headers=headbutt(forcelang='en-US'),
 	# 	cookies=dict(_gtoken=GTOKEN))
 	# data = json.loads(results_list.text)
-	# profile = data["summary"]
+	# profile = data["..."]
 
-	# payload = {
-	# 	"work_count":        profile["card"]["job_num"],
-	# 	"total_golden_eggs": profile["card"]["golden_ikura_total"],
-	# 	"total_eggs":        profile["card"]["ikura_total"],
-	# 	"total_rescued":     profile["card"]["help_total"],
-	# 	"total_point":       profile["card"]["kuma_point_total"]
-	# 	# other new things - total fish scales, kings defeated, current & total points?
-	# }
+	# payload:
+	# current points
+	# jobs (shifts) worked
+	# golden eggs collected
+	# power eggs colleted
+	# king salmonids defeated
+	# crew members rescued
+	# total points
+	# current number of scales
 
 	# url = "https://stat.ink/api/v2/salmon-stats"
 	# auth = {'Authorization': f'Bearer {API_KEY}'}
@@ -854,14 +854,22 @@ def prepare_job_result(job, ismonitoring, isblackout, overview_data=None, prevre
 		payload["title_after"]     = utils.b64d(job["afterGrade"]["id"])
 		payload["title_exp_after"] = job["afterGradePoint"]
 
-		# we're never certain of points gained - could be 20, but also 0 if playing w/ different titled friends
+		# never sure of points gained unless first job of rot - wave 3 clear is usu. +20, but 0 if playing w/ diff-titled friends
 		if job.get("previousHistoryDetail") != None:
 			prev_job_id = job["previousHistoryDetail"]["id"]
 
 			if overview_data: # passed in a file, so no web request needed
 				if prevresult:
-					payload["title_before"] = utils.b64d(prevresult["coopHistoryDetail"]["afterGrade"]["id"])
-					payload["title_exp_before"] = prevresult["coopHistoryDetail"]["afterGradePoint"]
+					# compare stage - if different, this is the first job of a rotation, where you start at 40
+					if job["coopStage"]["id"] != prevresult["coopHistoryDetail"]["coopStage"]["id"]:
+						payload["title_before"]     = payload["title_after"] # can't go up or down from just one job
+						payload["title_exp_before"] = 40
+					else:
+						try:
+							payload["title_before"]     = utils.b64d(prevresult["coopHistoryDetail"]["afterGrade"]["id"])
+							payload["title_exp_before"] = prevresult["coopHistoryDetail"]["afterGradePoint"]
+						except KeyError: # prev job was private or disconnect
+							pass
 			else:
 				prev_job_post = requests.post(utils.GRAPHQL_URL,
 					data=utils.gen_graphql_body(utils.translate_rid["CoopHistoryDetailQuery"], "coopHistoryDetailId", prev_job_id),
@@ -869,8 +877,16 @@ def prepare_job_result(job, ismonitoring, isblackout, overview_data=None, prevre
 					cookies=dict(_gtoken=GTOKEN))
 				prev_job = json.loads(prev_job_post.text)
 
-				payload["title_before"] = utils.b64d(prev_job["data"]["coopHistoryDetail"]["afterGrade"]["id"])
-				payload["title_exp_before"] = prev_job["data"]["coopHistoryDetail"]["afterGradePoint"]
+				# do stage comparison again
+				if job["coopStage"]["id"] != prev_job["data"]["coopHistoryDetail"]["coopStage"]["id"]:
+					payload["title_before"]     = payload["title_after"]
+					payload["title_exp_before"] = 40
+				else:
+					try:
+						payload["title_before"] = utils.b64d(prev_job["data"]["coopHistoryDetail"]["afterGrade"]["id"])
+						payload["title_exp_before"] = prev_job["data"]["coopHistoryDetail"]["afterGradePoint"]
+					except KeyError: # private or disconnect, or the json was invalid (expired job >50 ago) or something
+						pass
 
 	geggs = job["myResult"]["goldenDeliverCount"]
 	peggs = job["myResult"]["deliverCount"]
@@ -1003,7 +1019,7 @@ def prepare_job_result(job, ismonitoring, isblackout, overview_data=None, prevre
 					wep_string = None
 					if not gave_warning:
 						gave_warning = True
-						print("(!) Proceeding without weapon names. See https://github.com/frozenpandaman/s3s/issues/80 for more information.")
+						print("(!) Proceeding without weapon names. See https://github.com/frozenpandaman/s3s/issues/95 to fix this.")
 
 			weapons.append(wep_string)
 		player_info["weapons"] = weapons
@@ -1355,6 +1371,7 @@ def check_if_missing(which, isblackout, istestrun, skipprefetch):
 		noun = "jobs" # for second run through the loop
 		which = "salmon"
 
+
 def check_for_new_results(which, cached_battles, cached_jobs, battle_wins, battle_losses, battle_draws, splatfest_wins, splatfest_losses, splatfest_draws, mirror_matches, job_successes, job_failures, isblackout, istestrun):
 	'''Helper function for monitor_battles(), called every N seconds or when exiting.'''
 
@@ -1427,7 +1444,7 @@ def check_for_new_results(which, cached_battles, cached_jobs, battle_wins, battl
 				result = json.loads(result_post.text)
 
 				if result["data"]["coopHistoryDetail"]["jobPoint"] == None \
-				and utils.custom_key_exists("ignore_private", CONFIG_DATA):
+				and utils.custom_key_exists("ignore_private", CONFIG_DATA): # works pre- and post-2.0.0
 					pass
 				else:
 					foundany = True
