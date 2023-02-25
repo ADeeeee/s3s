@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-# s3s (ↄ) 2022 eli fessler (frozenpandaman), clovervidia
-# Based on splatnet2statink (ↄ) 2017-2022 eli fessler (frozenpandaman), clovervidia
+# s3s (ↄ) 2022-2023 eli fessler (frozenpandaman), clovervidia
+# Based on splatnet2statink (ↄ) 2017-2023 eli fessler (frozenpandaman), clovervidia
 # https://github.com/frozenpandaman/s3s
 # License: GPLv3
 
@@ -11,7 +11,7 @@ import msgpack
 from packaging import version
 import iksm, utils
 
-A_VERSION = "0.3.0"
+A_VERSION = "0.3.1"
 
 DEBUG = False
 
@@ -200,7 +200,7 @@ def fetch_json(which, separate=False, exportall=False, specific=False, numbers_o
 			f"exportall={exportall}, specific={specific}, numbers_only={numbers_only}")
 
 	if exportall and not separate:
-		print("fetch_json() must be called with separate=True if using exportall.")
+		print("* fetch_json() must be called with separate=True if using exportall.")
 		sys.exit(1)
 
 	if not skipprefetch:
@@ -747,7 +747,7 @@ def prepare_battle_result(battle, ismonitoring, isblackout, overview_data=None):
 									payload["rank_exp_change"] = parent["bankaraMatchChallenge"]["earnedUdemaePoint"]
 
 							if DEBUG:
-								print(f'* {battle["myTeam"]["judgement"]} {idx}')
+								print(f'* {battle["judgement"]} {idx}')
 								print(f'* rank_before: {payload["rank_before"]}')
 								print(f'* rank_after: {payload["rank_after"]}')
 								print(f'* rank up battle: {parent["bankaraMatchChallenge"]["isPromo"]}')
@@ -931,7 +931,7 @@ def prepare_job_result(job, ismonitoring, isblackout, overview_data=None, prevre
 						try:
 							payload["title_before"] = utils.b64d(prev_job["data"]["coopHistoryDetail"]["afterGrade"]["id"])
 							payload["title_exp_before"] = prev_job["data"]["coopHistoryDetail"]["afterGradePoint"]
-						except KeyError and TypeError: # private or disconnect, or the json was invalid (expired job >50 ago) or something
+						except (KeyError, TypeError): # private or disconnect, or the json was invalid (expired job >50 ago) or something
 							pass
 				except json.decoder.JSONDecodeError:
 					pass
@@ -1165,14 +1165,14 @@ def post_result(data, ismonitoring, isblackout, istestrun, overview_data=None):
 			print("Ill-formatted JSON while uploading. Exiting.")
 			print('\nDebug info:')
 			print(json.dumps(results))
-			sys.exit(1)
+			sys.exit(1) # always exit here - something is seriously wrong
 
 		if len(payload) == 0: # received blank payload from prepare_job_result() - skip unsupported battle
 			continue
 
 		# should have been taken care of in fetch_json() but just in case...
 		if payload.get("lobby") == "private" and utils.custom_key_exists("ignore_private", CONFIG_DATA) or \
-			payload.get("private") == "yes" and utils.custom_key_exists("ignore_private", CONFIG_DATA): # SR version
+			payload.get("private") == "yes" and utils.custom_key_exists("ignore_private_jobs", CONFIG_DATA): # SR version
 			continue
 
 		s3s_values = {'agent': '\u0073\u0033\u0073', 'agent_version': f'v{A_VERSION}'} # lol
@@ -1345,8 +1345,24 @@ def fetch_and_upload_single_result(hash, noun, isblackout, istestrun):
 			data=utils.gen_graphql_body(utils.translate_rid[dict_key], dict_key2, hash),
 			headers=headbutt(forcelang=lang),
 			cookies=dict(_gtoken=GTOKEN))
-	result = json.loads(result_post.text)
-	post_result(result, False, isblackout, istestrun) # not monitoring mode
+	try:
+		result = json.loads(result_post.text)
+		post_result(result, False, isblackout, istestrun) # not monitoring mode
+	except json.decoder.JSONDecodeError: # retry once, hopefully avoid a few errors
+		result_post = requests.post(utils.GRAPHQL_URL,
+				data=utils.gen_graphql_body(utils.translate_rid[dict_key], dict_key2, hash),
+				headers=headbutt(forcelang=lang),
+				cookies=dict(_gtoken=GTOKEN))
+		try:
+			result = json.loads(result_post.text)
+			post_result(result, False, isblackout, istestrun)
+		except json.decoder.JSONDecodeError:
+			if utils.custom_key_exists("errors_pass_silently", CONFIG_DATA):
+				print("Error uploading one of your battles. Continuing...")
+				pass
+			else:
+				print("Error uploading one of your battles. Please try running s3s again.")
+				sys.exit(1)
 
 
 def check_if_missing(which, isblackout, istestrun, skipprefetch):
@@ -1377,8 +1393,11 @@ def check_if_missing(which, isblackout, istestrun, skipprefetch):
 			try:
 				statink_uploads = json.loads(resp.text)
 			except:
-				print(f"Encountered an error while checking recently-uploaded {noun}. Is stat.ink down?")
-				sys.exit(1)
+				if utils.custom_key_exists("errors_pass_silently", CONFIG_DATA):
+					print(f"Error while checking recently-uploaded {noun}. Continuing...")
+				else:
+					print(f"Error while checking recently-uploaded {noun}. Is stat.ink down?")
+					sys.exit(1)
 
 			# ! fetch from online
 			# specific - check ALL possible battles; printout - to show tokens are being checked at program start
@@ -1443,9 +1462,9 @@ def check_for_new_results(which, cached_battles, cached_jobs, battle_wins, battl
 					pass
 				else:
 					foundany = True
-					if result["data"]["vsHistoryDetail"]["myTeam"]["judgement"] == "WIN":
+					if result["data"]["vsHistoryDetail"]["judgement"] == "WIN":
 						outcome = "Victory"
-					elif result["data"]["vsHistoryDetail"]["myTeam"]["judgement"] in ("LOSE", "DEEMED_LOSE", "EXEMPTED_LOSE"):
+					elif result["data"]["vsHistoryDetail"]["judgement"] in ("LOSE", "DEEMED_LOSE", "EXEMPTED_LOSE"):
 						outcome = "Defeat"
 					else:
 						outcome = "Draw"
@@ -1492,7 +1511,7 @@ def check_for_new_results(which, cached_battles, cached_jobs, battle_wins, battl
 				result = json.loads(result_post.text)
 
 				if result["data"]["coopHistoryDetail"]["jobPoint"] == None \
-				and utils.custom_key_exists("ignore_private", CONFIG_DATA): # works pre- and post-2.0.0
+				and utils.custom_key_exists("ignore_private_jobs", CONFIG_DATA): # works pre- and post-2.0.0
 					pass
 				else:
 					foundany = True

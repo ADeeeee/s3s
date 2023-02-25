@@ -1,4 +1,4 @@
-# (ↄ) 2017-2022 eli fessler (frozenpandaman), clovervidia
+# (ↄ) 2017-2023 eli fessler (frozenpandaman), clovervidia
 # https://github.com/frozenpandaman/s3s
 # License: GPLv3
 
@@ -10,7 +10,7 @@ S3S_VERSION           = "unknown"
 NSOAPP_VERSION        = "unknown"
 NSOAPP_VER_FALLBACK   = "2.4.0"
 WEB_VIEW_VERSION      = "unknown"
-WEB_VIEW_VER_FALLBACK = "2.0.0-bd36a652" # fallback for current splatnet 3 ver
+WEB_VIEW_VER_FALLBACK = "2.0.0-7070f95e" # fallback for current splatnet 3 ver
 SPLATNET3_URL         = "https://api.lp1.av5ja.srv.nintendo.net"
 
 # functions in this file & call stack:

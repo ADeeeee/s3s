@@ -1,4 +1,4 @@
-# (ↄ) 2017-2022 eli fessler (frozenpandaman), clovervidia
+# (ↄ) 2017-2023 eli fessler (frozenpandaman), clovervidia
 # https://github.com/frozenpandaman/s3s
 # License: GPLv3
 
@@ -14,8 +14,10 @@ SALMON_NAMESPACE = uuid.UUID('f1911910-605e-11ed-a622-7085c2057a9d')
 
 SUPPORTED_KEYS = [
 	"ignore_private",
+	"ignore_private_jobs",
 	"app_user_agent",
-	"force_uploads"
+	"force_uploads",
+	"errors_pass_silently"
 ]
 
 # SHA256 hash database for SplatNet 3 GraphQL queries
