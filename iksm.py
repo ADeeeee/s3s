@@ -6,11 +6,13 @@ import base64, hashlib, json, os, re, sys, urllib
 import requests
 from bs4 import BeautifulSoup
 
+USE_OLD_NSOAPP_VER    = False # Change this to True if you're getting a "9403: Invalid token." error
+
 S3S_VERSION           = "unknown"
 NSOAPP_VERSION        = "unknown"
-NSOAPP_VER_FALLBACK   = "2.4.0"
+NSOAPP_VER_FALLBACK   = "2.5.0"
 WEB_VIEW_VERSION      = "unknown"
-WEB_VIEW_VER_FALLBACK = "2.0.0-7070f95e" # fallback for current splatnet 3 ver
+WEB_VIEW_VER_FALLBACK = "3.0.0-2857bc50" # fallback for current splatnet 3 ver
 SPLATNET3_URL         = "https://api.lp1.av5ja.srv.nintendo.net"
 
 # functions in this file & call stack:
@@ -25,6 +27,9 @@ session = requests.Session()
 
 def get_nsoapp_version():
 	'''Fetches the current Nintendo Switch Online app version from the Apple App Store and sets it globally.'''
+
+	if USE_OLD_NSOAPP_VER:
+		return NSOAPP_VER_FALLBACK
 
 	global NSOAPP_VERSION
 	if NSOAPP_VERSION != "unknown": # already set
@@ -308,7 +313,7 @@ def get_gtoken(f_gen_url, session_token, ver):
 		except:
 			print("Error from Nintendo (in Account/Login step):")
 			print(json.dumps(splatoon_token, indent=2))
-			print("Re-running the script usually fixes this.")
+			print("Try re-running the script. Or, if the NSO app has recently been updated, you may temporarily change `USE_OLD_NSOAPP_VER` to True at the top of iksm.py for a workaround.")
 			sys.exit(1)
 
 		f, uuid, timestamp = call_f_api(id_token, 2, f_gen_url)
