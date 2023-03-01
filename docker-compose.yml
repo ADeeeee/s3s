@@ -6,8 +6,9 @@ services:
     build:
       context: .
       network: host
+    command: "-M 600"
     volumes:
-       - ./:/app
+      - ./:/app
     restart: "no"
     user: root
     network_mode: host
