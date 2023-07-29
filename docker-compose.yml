@@ -1,0 +1,14 @@
+version: "2.4"
+
+services:
+  s3s:
+    image: s3s:latest
+    build:
+      context: .
+      network: host
+    command: "-M 600"
+    volumes:
+      - ./:/app
+    restart: "no"
+    user: root
+    network_mode: host
